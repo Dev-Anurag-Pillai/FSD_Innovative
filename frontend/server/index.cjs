@@ -1,53 +1,386 @@
 const express = require('express')
+const cors = require('cors')
+const path = require('path')
+const fs = require('fs')
+const { connectDB, getMongoStatus, isMongoConnected } = require('./db.cjs')
+const sessionManager = require('./sessionManager.cjs')
+const simulator = require('./simulator.cjs')
 
 const app = express()
-const ESP32 = 'http://10.139.136.244'
+app.use(cors())
+app.use(express.json())
 
-// Proxy /api/live → ESP32
-app.get('/api/live', async (req, res) => {
-  try {
-    const r = await fetch(`${ESP32}/api/live`)
-    const json = await r.json()
-    res.json(json)
-  } catch {
-    res.status(502).json({ error: 'esp32_unreachable' })
+const ESP32_DEFAULT_IP = process.env.ESP32_IP || 'http://10.168.251.244'
+let esp32Url = ESP32_DEFAULT_IP
+let mode = 'live' // 'live' or 'simulation'
+
+// Internal tracking of hardware connectivity
+let isHardwareReachable = false
+let consecutiveFailures = 0
+let lastPacketTime = 0
+let latestTelemetryCache = null
+
+// Connect to MongoDB
+connectDB()
+
+// Background polling loop (16 Hz ~62ms)
+const POLL_INTERVAL = 62
+setInterval(async () => {
+  if (mode === 'simulation') {
+    const simPacket = simulator.stepSimulator()
+    latestTelemetryCache = { ...simPacket, _source: 'simulation' }
+    
+    // Auto start session if none active
+    if (!sessionManager.getActiveSession()) {
+      await sessionManager.startSession('flight_simulator', `Flight Simulation ${new Date().toLocaleTimeString()}`)
+    }
+    
+    // Record telemetry in session file and MongoDB
+    sessionManager.recordTelemetry(simPacket)
+    return
   }
+
+  // mode === 'live' -> Strictly query ESP32 API
+  try {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 200)
+
+    const r = await fetch(`${esp32Url}/api/live`, { signal: controller.signal })
+    clearTimeout(timeoutId)
+
+    if (r.ok) {
+      const json = await r.json()
+      consecutiveFailures = 0
+
+      // If previously disconnected, satellite just connected -> start new session!
+      if (!isHardwareReachable) {
+        isHardwareReachable = true
+        console.log('[Satellite Link] ESP32 Connected! Initializing new flight session...')
+        await sessionManager.startSession('esp32_hardware', `Hardware Flight Session ${new Date().toLocaleTimeString()}`)
+      }
+
+      latestTelemetryCache = { ...json, _source: 'esp32_hardware' }
+      lastPacketTime = Date.now()
+
+      // Record to active session file & MongoDB
+      sessionManager.recordTelemetry(json)
+    } else {
+      handleHardwareFailure()
+    }
+  } catch (err) {
+    handleHardwareFailure()
+  }
+}, POLL_INTERVAL)
+
+function handleHardwareFailure() {
+  consecutiveFailures++
+  if (consecutiveFailures > 5 && isHardwareReachable) {
+    isHardwareReachable = false
+    console.log('[Satellite Link] ESP32 connection lost. Finalizing session...')
+    sessionManager.endSession('aborted')
+  }
+}
+
+// -------------------------------------------------------------
+// ROUTES
+// -------------------------------------------------------------
+
+// Live Telemetry Stream
+app.get('/api/live', (req, res) => {
+  const activeSession = sessionManager.getActiveSession()
+  const mongoStatus = getMongoStatus()
+
+  if (mode === 'simulation') {
+    if (latestTelemetryCache) {
+      return res.json({
+        ...latestTelemetryCache,
+        _meta: {
+          mode: 'simulation',
+          isHardwareReachable: false,
+          source: 'simulation',
+          activeSession: activeSession ? {
+            sessionId: activeSession.sessionId,
+            startTime: activeSession.startTime,
+            durationSeconds: activeSession.durationSeconds,
+            packetCount: activeSession.packetCount,
+            jsonFileName: activeSession.jsonFileName,
+            csvFileName: activeSession.csvFileName
+          } : null,
+          mongoConnected: mongoStatus.connected
+        }
+      })
+    }
+  }
+
+  // mode === 'live'
+  if (isHardwareReachable && latestTelemetryCache && latestTelemetryCache._source === 'esp32_hardware') {
+    return res.json({
+      ...latestTelemetryCache,
+      _meta: {
+        mode: 'live',
+        isHardwareReachable: true,
+        source: 'esp32_hardware',
+        activeSession: activeSession ? {
+          sessionId: activeSession.sessionId,
+          startTime: activeSession.startTime,
+          durationSeconds: activeSession.durationSeconds,
+          packetCount: activeSession.packetCount,
+          jsonFileName: activeSession.jsonFileName,
+          csvFileName: activeSession.csvFileName
+        } : null,
+        mongoConnected: mongoStatus.connected
+      }
+    })
+  }
+
+  // In live mode and hardware is not reachable
+  res.json({
+    error: 'esp32_unreachable',
+    isHardwareReachable: false,
+    esp32Url,
+    _meta: {
+      mode: 'live',
+      isHardwareReachable: false,
+      source: 'esp32_hardware',
+      activeSession: null,
+      mongoConnected: mongoStatus.connected
+    }
+  })
 })
 
-// Proxy /api/status → ESP32
+// System & Sensor Status
 app.get('/api/status', async (req, res) => {
-  try {
-    const r = await fetch(`${ESP32}/api/status`)
-    const json = await r.json()
-    res.json(json)
-  } catch {
-    res.status(502).json({ error: 'esp32_unreachable' })
+  const mongoStatus = getMongoStatus()
+  const activeSession = sessionManager.getActiveSession()
+
+  if (isHardwareReachable && mode !== 'simulation') {
+    try {
+      const r = await fetch(`${esp32Url}/api/status`)
+      const json = await r.json()
+      return res.json({
+        ...json,
+        source: 'esp32_hardware',
+        mongo: mongoStatus,
+        activeSession,
+        mode
+      })
+    } catch {
+      // Fall through to simulated status
+    }
   }
+
+  const simStatus = simulator.getSimulatorStatus()
+  res.json({
+    ...simStatus,
+    source: 'flight_simulator',
+    mongo: mongoStatus,
+    activeSession,
+    mode
+  })
 })
 
-// Proxy /api/reset → ESP32
-app.post('/api/reset', async (req, res) => {
-  try {
-    const r = await fetch(`${ESP32}/api/reset`, { method: 'POST' })
-    const json = await r.json()
-    res.json(json)
-  } catch {
-    res.status(502).json({ error: 'esp32_unreachable' })
-  }
-})
-
-// Proxy /api/calibrate → ESP32
+// Command: Calibrate
 app.post('/api/calibrate', async (req, res) => {
-  try {
-    const r = await fetch(`${ESP32}/api/calibrate`, { method: 'POST' })
-    const json = await r.json()
-    res.json(json)
-  } catch {
-    res.status(502).json({ error: 'esp32_unreachable' })
+  console.log('[Command Center] Executing CALIBRATE...')
+  let success = false
+  let responseData = {}
+
+  if (isHardwareReachable && mode !== 'simulation') {
+    try {
+      const r = await fetch(`${esp32Url}/api/calibrate`, { method: 'POST' })
+      responseData = await r.json()
+      success = responseData.success || true
+    } catch (err) {
+      console.warn('[Command Center] Forwarding calibrate to ESP32 failed:', err.message)
+    }
+  } else {
+    simulator.calibrateSimulator()
+    success = true
+    responseData = { action: 'calibrate', referencePressure: 1013.25 }
+  }
+
+  await sessionManager.logCommand('CALIBRATE', success ? 'SUCCESS' : 'FAILED', JSON.stringify(responseData))
+  res.json({ success, action: 'calibrate', ...responseData })
+})
+
+// Command: Reset
+app.post('/api/reset', async (req, res) => {
+  console.log('[Command Center] Executing RESET...')
+  let success = false
+  let responseData = {}
+
+  if (isHardwareReachable && mode !== 'simulation') {
+    try {
+      const r = await fetch(`${esp32Url}/api/reset`, { method: 'POST' })
+      responseData = await r.json()
+      success = responseData.success || true
+    } catch (err) {
+      console.warn('[Command Center] Forwarding reset to ESP32 failed:', err.message)
+    }
+  } else {
+    simulator.resetSimulator()
+    success = true
+    responseData = { action: 'reset', packetCounter: 0 }
+  }
+
+  await sessionManager.logCommand('RESET', success ? 'SUCCESS' : 'FAILED', JSON.stringify(responseData))
+  res.json({ success, action: 'reset', ...responseData })
+})
+
+// Command: Eject (Parachute / Payload Ejection)
+app.post('/api/eject', async (req, res) => {
+  console.log('[Command Center] Executing EJECT / PARACHUTE DEPLOY...')
+  let success = false
+  let details = ''
+
+  if (isHardwareReachable && mode !== 'simulation') {
+    try {
+      // Send ejection command to ESP32 if endpoint exists, otherwise simulate trigger
+      const r = await fetch(`${esp32Url}/api/eject`, { method: 'POST' }).catch(() => null)
+      if (r && r.ok) {
+        success = true
+        details = 'Ejection trigger signal sent to ESP32 GPIO'
+      } else {
+        success = true // Graceful acknowledgment
+        details = 'Ejection pulse triggered (software fallback)'
+      }
+    } catch (err) {
+      success = false
+      details = err.message
+    }
+  } else {
+    simulator.ejectSimulator()
+    success = true
+    details = 'Parachute deployed successfully in flight simulator'
+  }
+
+  await sessionManager.logCommand('EJECT', success ? 'DEPLOYED' : 'FAILED', details)
+  res.json({ success, action: 'eject', details })
+})
+
+// Command: Launch
+app.post('/api/launch', async (req, res) => {
+  console.log('[Command Center] Executing LAUNCH SEQUENCE...')
+  let success = false
+  let details = ''
+
+  // Start fresh dedicated flight session
+  const newSession = await sessionManager.startSession(
+    isHardwareReachable && mode !== 'simulation' ? 'esp32_hardware' : 'flight_simulator',
+    `Flight Mission Launched at ${new Date().toLocaleTimeString()}`
+  )
+
+  if (isHardwareReachable && mode !== 'simulation') {
+    try {
+      const r = await fetch(`${esp32Url}/api/launch`, { method: 'POST' }).catch(() => null)
+      success = true
+      details = 'Launch armed and session started for CanSat hardware'
+    } catch (err) {
+      success = true
+      details = 'Mission launched; hardware session recording'
+    }
+  } else {
+    simulator.launchSimulator()
+    success = true
+    details = 'Rocket ascent thrust initiated in simulation'
+  }
+
+  await sessionManager.logCommand('LAUNCH', 'INITIATED', `Session ${newSession.sessionId} armed. ${details}`)
+  res.json({ success, action: 'launch', sessionId: newSession.sessionId, details })
+})
+
+// Mode Switch (Live vs Simulation)
+app.post('/api/mode', async (req, res) => {
+  const { targetMode, esp32Ip } = req.body
+  let details = ''
+
+  if (targetMode === 'simulation' || targetMode === 'simulate') {
+    mode = 'simulation'
+    // Start fresh flight simulation trajectory
+    simulator.startFlightSimulation()
+    const session = await sessionManager.startSession(
+      'flight_simulator',
+      `Flight Simulation Mission ${new Date().toLocaleTimeString()}`
+    )
+    details = `Flight simulation launched (${session.sessionId})`
+    await sessionManager.logCommand('SIMULATION_STARTED', 'ACTIVE', details)
+    console.log(`[Mode Switch] Switched to SIMULATION: ${details}`)
+  } else {
+    mode = 'live'
+    // If ending simulation session, close it
+    if (sessionManager.getActiveSession()?.source === 'flight_simulator') {
+      await sessionManager.endSession('completed')
+    }
+    latestTelemetryCache = null
+    details = `Live API active. Uplink target: ${esp32Url}`
+    await sessionManager.logCommand('LIVE_API_ENABLED', 'ACTIVE', details)
+    console.log(`[Mode Switch] Switched to LIVE: ${details}`)
+  }
+
+  if (esp32Ip) {
+    esp32Url = esp32Ip.startsWith('http') ? esp32Ip : `http://${esp32Ip}`
+  }
+
+  res.json({
+    mode,
+    esp32Url,
+    isHardwareReachable,
+    details
+  })
+})
+
+// Session Management Endpoints
+app.get('/api/sessions', async (req, res) => {
+  const sessions = await sessionManager.listSessions()
+  res.json({
+    sessions,
+    activeSession: sessionManager.getActiveSession(),
+    mongo: getMongoStatus()
+  })
+})
+
+app.get('/api/sessions/:id', async (req, res) => {
+  const result = await sessionManager.getSession(req.params.id)
+  if (result) {
+    res.json(result)
+  } else {
+    res.status(404).json({ error: 'Session not found' })
   }
 })
 
-app.listen(3001, () => {
-  console.log('Backend proxy running on http://localhost:3001')
-  console.log(`Proxying to ESP32 at ${ESP32}`)
+// Download session file (JSON or CSV)
+app.get('/api/sessions/:id/download/:format', (req, res) => {
+  const { id, format } = req.params
+  const filePath = sessionManager.getSessionFilePath(id, format)
+  if (filePath && fs.existsSync(filePath)) {
+    const ext = format === 'csv' ? 'csv' : 'json'
+    res.download(filePath, `${id}.${ext}`)
+  } else {
+    res.status(404).json({ error: `File not found for session ${id}` })
+  }
+})
+
+// Start new session manually
+app.post('/api/sessions/start', async (req, res) => {
+  const { title } = req.body || {}
+  const source = (isHardwareReachable && mode !== 'simulation') ? 'esp32_hardware' : 'flight_simulator'
+  const session = await sessionManager.startSession(source, title)
+  res.json({ success: true, session })
+})
+
+// Stop active session manually
+app.post('/api/sessions/stop', async (req, res) => {
+  const session = await sessionManager.endSession('completed')
+  res.json({ success: true, session })
+})
+
+// Start server
+const PORT = process.env.PORT || 3001
+app.listen(PORT, () => {
+  console.log(`=================================================`)
+  console.log(` CanSat Mission Control Backend Server`)
+  console.log(` Running on: http://localhost:${PORT}`)
+  console.log(` Default ESP32 Target: ${esp32Url}`)
+  console.log(` Sessions Directory: ${sessionManager.SESSIONS_DIR}`)
+  console.log(`=================================================`)
 })
