@@ -20,6 +20,9 @@ let consecutiveFailures = 0
 let lastPacketTime = 0
 let latestTelemetryCache = null
 
+// MongoDB recording state (user-controlled via Start/Stop Recording button)
+let isRecording = false
+
 // Connect to MongoDB
 connectDB()
 
@@ -62,8 +65,10 @@ setInterval(async () => {
       latestTelemetryCache = { ...json, _source: 'esp32_hardware' }
       lastPacketTime = Date.now()
 
-      // Record to active session file & MongoDB
-      sessionManager.recordTelemetry(json)
+      // Record to active session file & MongoDB only when recording is active
+      if (isRecording) {
+        sessionManager.recordTelemetry(json)
+      }
     } else {
       handleHardwareFailure()
     }
@@ -90,6 +95,12 @@ app.get('/api/live', (req, res) => {
   const activeSession = sessionManager.getActiveSession()
   const mongoStatus = getMongoStatus()
 
+  const commonMeta = {
+    isRecording,
+    esp32Url,
+    mongoConnected: mongoStatus.connected
+  }
+
   if (mode === 'simulation') {
     if (latestTelemetryCache) {
       return res.json({
@@ -106,7 +117,7 @@ app.get('/api/live', (req, res) => {
             jsonFileName: activeSession.jsonFileName,
             csvFileName: activeSession.csvFileName
           } : null,
-          mongoConnected: mongoStatus.connected
+          ...commonMeta
         }
       })
     }
@@ -128,7 +139,7 @@ app.get('/api/live', (req, res) => {
           jsonFileName: activeSession.jsonFileName,
           csvFileName: activeSession.csvFileName
         } : null,
-        mongoConnected: mongoStatus.connected
+        ...commonMeta
       }
     })
   }
@@ -143,7 +154,7 @@ app.get('/api/live', (req, res) => {
       isHardwareReachable: false,
       source: 'esp32_hardware',
       activeSession: null,
-      mongoConnected: mongoStatus.connected
+      ...commonMeta
     }
   })
 })
@@ -374,6 +385,115 @@ app.post('/api/sessions/stop', async (req, res) => {
   res.json({ success: true, session })
 })
 
+// -------------------------------------------------------------
+// DYNAMIC IP MANAGEMENT
+// -------------------------------------------------------------
+
+// Get current ESP32 IP
+app.get('/api/ip', (req, res) => {
+  res.json({ esp32Url, isHardwareReachable })
+})
+
+// Set ESP32 IP at runtime (for deployed usage where IP changes)
+app.post('/api/ip', (req, res) => {
+  const { ip } = req.body
+  if (!ip) {
+    return res.status(400).json({ error: 'IP address is required. Send { "ip": "10.x.x.x" }' })
+  }
+
+  const newUrl = ip.startsWith('http') ? ip : `http://${ip}`
+  const oldUrl = esp32Url
+  esp32Url = newUrl
+
+  // Reset connection state so the poller re-discovers the new device
+  isHardwareReachable = false
+  consecutiveFailures = 0
+  latestTelemetryCache = null
+
+  console.log(`[IP Manager] ESP32 target changed: ${oldUrl} -> ${esp32Url}`)
+  res.json({ success: true, esp32Url, previousUrl: oldUrl })
+})
+
+// -------------------------------------------------------------
+// RECORDING CONTROL (Start / Stop MongoDB persistence)
+// -------------------------------------------------------------
+
+// Get recording status
+app.get('/api/recording/status', (req, res) => {
+  const mongoStatus = getMongoStatus()
+  const activeSession = sessionManager.getActiveSession()
+  res.json({
+    isRecording,
+    mongoConnected: mongoStatus.connected,
+    activeSession: activeSession ? {
+      sessionId: activeSession.sessionId,
+      packetCount: activeSession.packetCount,
+      durationSeconds: activeSession.durationSeconds
+    } : null
+  })
+})
+
+// Start Recording → creates a new session and begins writing to MongoDB + files
+app.post('/api/recording/start', async (req, res) => {
+  if (isRecording) {
+    return res.json({ success: false, message: 'Already recording', isRecording: true })
+  }
+
+  const mongoStatus = getMongoStatus()
+  const source = (isHardwareReachable && mode !== 'simulation') ? 'esp32_hardware' : 'flight_simulator'
+  const session = await sessionManager.startSession(source, `Recording Session ${new Date().toLocaleTimeString()}`)
+  isRecording = true
+
+  const statusMsg = mongoStatus.connected
+    ? 'Recording active: streaming telemetry to MongoDB Compass (database: cansat_telemetry)'
+    : 'Recording active: saving to local session files (MongoDB currently offline, will auto-sync when connected)'
+
+  console.log(`[Recording] Started recording. MongoDB connected: ${mongoStatus.connected}. Session: ${session.sessionId}`)
+  res.json({
+    success: true,
+    isRecording: true,
+    mongoConnected: mongoStatus.connected,
+    message: statusMsg,
+    session: {
+      sessionId: session.sessionId,
+      startTime: session.startTime
+    },
+    mongo: mongoStatus
+  })
+})
+
+// Stop Recording → finalizes the active session
+app.post('/api/recording/stop', async (req, res) => {
+  if (!isRecording) {
+    return res.json({ success: false, message: 'Not currently recording', isRecording: false })
+  }
+
+  isRecording = false
+  const session = await sessionManager.endSession('completed')
+
+  console.log(`[Recording] Stopped recording. Session finalized: ${session?.sessionId || 'unknown'}`)
+  res.json({
+    success: true,
+    isRecording: false,
+    message: `Recording stopped. ${session?.packetCount || 0} packets saved to MongoDB & files.`,
+    session: session ? {
+      sessionId: session.sessionId,
+      packetCount: session.packetCount,
+      durationSeconds: session.durationSeconds
+    } : null
+  })
+})
+
+// Serve static frontend files in production (Render deployment)
+const distPath = path.join(__dirname, '../dist')
+if (fs.existsSync(distPath)) {
+  app.use(express.static(distPath))
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api')) return next()
+    res.sendFile(path.join(distPath, 'index.html'))
+  })
+}
+
 // Start server
 const PORT = process.env.PORT || 3001
 app.listen(PORT, () => {
@@ -384,3 +504,4 @@ app.listen(PORT, () => {
   console.log(` Sessions Directory: ${sessionManager.SESSIONS_DIR}`)
   console.log(`=================================================`)
 })
+

@@ -33,6 +33,8 @@ export default function App() {
   const [isSessionModalOpen, setIsSessionModalOpen] = useState(false)
   const [mode, setMode] = useState('auto')
   const [meta, setMeta] = useState(null)
+  const [isRecording, setIsRecording] = useState(false)
+  const [esp32Url, setEsp32Url] = useState('')
   const prevPacket = useRef(null)
 
   // Fetch status on mount and periodically
@@ -65,6 +67,9 @@ export default function App() {
               }
               if (json._meta) {
                 setMeta(json._meta)
+                // Sync recording state and ESP32 URL from server
+                if (json._meta.isRecording !== undefined) setIsRecording(json._meta.isRecording)
+                if (json._meta.esp32Url) setEsp32Url(json._meta.esp32Url)
               }
 
               if (json.error === 'esp32_unreachable') {
@@ -221,6 +226,90 @@ export default function App() {
     }
   }
 
+  // Toggle MongoDB Recording
+  const handleToggleRecording = async () => {
+    const endpoint = isRecording ? '/api/recording/stop' : '/api/recording/start'
+    const timeStr = new Date().toLocaleTimeString()
+
+    try {
+      const res = await fetch(endpoint, { method: 'POST' })
+      const json = await res.json()
+
+      if (json.success) {
+        setIsRecording(json.isRecording)
+        setCommandLogs(prev => [
+          ...prev,
+          {
+            command: json.isRecording ? 'START RECORDING' : 'STOP RECORDING',
+            time: timeStr,
+            status: 'SUCCESS',
+            details: json.message || (json.isRecording
+              ? `Recording session ${json.session?.sessionId || ''} started`
+              : `Recording stopped. ${json.session?.packetCount || 0} packets saved.`)
+          }
+        ])
+        fetchStatus()
+      } else {
+        setCommandLogs(prev => [
+          ...prev,
+          {
+            command: isRecording ? 'STOP RECORDING' : 'START RECORDING',
+            time: timeStr,
+            status: 'FAILED',
+            details: json.message || 'Operation failed'
+          }
+        ])
+      }
+    } catch (err) {
+      setCommandLogs(prev => [
+        ...prev,
+        {
+          command: 'RECORDING',
+          time: timeStr,
+          status: 'ERROR',
+          details: err.message || 'Network error'
+        }
+      ])
+    }
+  }
+
+  // Change ESP32 IP address at runtime
+  const handleChangeIp = async (newIp) => {
+    const timeStr = new Date().toLocaleTimeString()
+    try {
+      const res = await fetch('/api/ip', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ip: newIp })
+      })
+      const json = await res.json()
+
+      if (json.success) {
+        setEsp32Url(json.esp32Url)
+        setCommandLogs(prev => [
+          ...prev,
+          {
+            command: 'SET ESP32 IP',
+            time: timeStr,
+            status: 'SUCCESS',
+            details: `Target changed: ${json.previousUrl} → ${json.esp32Url}`
+          }
+        ])
+        fetchStatus()
+      }
+    } catch (err) {
+      setCommandLogs(prev => [
+        ...prev,
+        {
+          command: 'SET ESP32 IP',
+          time: timeStr,
+          status: 'ERROR',
+          details: err.message || 'Failed to update IP'
+        }
+      ])
+    }
+  }
+
   // Pulse animation detection on packet change
   const packetChanged = data && prevPacket.current !== data.p
   if (data) prevPacket.current = data.p
@@ -292,6 +381,10 @@ export default function App() {
         onOpenSessions={() => setIsSessionModalOpen(true)}
         onToggleMode={handleToggleMode}
         mode={mode}
+        isRecording={isRecording}
+        onToggleRecording={handleToggleRecording}
+        esp32Url={esp32Url}
+        onChangeIp={handleChangeIp}
       />
 
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 space-y-6">
@@ -336,7 +429,7 @@ export default function App() {
             <div className="flex items-center space-x-2.5">
               <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
               <span>
-                <strong>Live Stream Offline:</strong> Awaiting ESP32 at <code className="text-cyan-300">http://10.168.251.244/api/live</code>. Click <strong>SIMULATE</strong> to start a flight simulation test.
+                <strong>Live Stream Offline:</strong> Awaiting ESP32 at <code className="text-cyan-300">{esp32Url || 'http://10.168.251.244'}/api/live</code>. Enter your current IP in "Enter IP:" above, or click <strong>SIMULATE</strong>.
               </span>
             </div>
             <button

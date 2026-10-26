@@ -1,5 +1,5 @@
-import React from 'react'
-import { Radio, Database, HardDrive, Wifi, WifiOff, Clock, ShieldCheck, Flame, RotateCw, Rocket } from 'lucide-react'
+import React, { useState } from 'react'
+import { Radio, Database, HardDrive, Wifi, WifiOff, Clock, ShieldCheck, Flame, RotateCw, Rocket, Circle, Square, Globe } from 'lucide-react'
 
 export default function Navbar({
   connected,
@@ -8,11 +8,38 @@ export default function Navbar({
   activeSession,
   onOpenSessions,
   onToggleMode,
-  mode
+  mode,
+  isRecording,
+  onToggleRecording,
+  esp32Url,
+  onChangeIp
 }) {
   const isMongoConnected = meta?.mongoConnected || false
   const isHardware = meta?.source === 'esp32_hardware'
   const isSim = meta?.source === 'simulation'
+
+  const [ipInput, setIpInput] = useState('')
+  const [ipLoading, setIpLoading] = useState(false)
+
+  const handleIpSubmit = async () => {
+    if (!ipInput.trim()) return
+    setIpLoading(true)
+    try {
+      await onChangeIp(ipInput.trim())
+      setIpInput('')
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setIpLoading(false)
+    }
+  }
+
+  const handleIpKeyDown = (e) => {
+    if (e.key === 'Enter') handleIpSubmit()
+    if (e.key === 'Escape') {
+      setIpInput('')
+    }
+  }
 
   return (
     <header className="border-b border-white/10 bg-space-900/90 backdrop-blur-md sticky top-0 z-40">
@@ -40,8 +67,57 @@ export default function Navbar({
           </div>
         </div>
 
-        {/* Center: Active Session & Recording Status */}
-        <div className="flex items-center gap-2">
+        {/* Center: IP Input + Recording + Session Info */}
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Dynamic IP Input */}
+          <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded-lg border border-cyan-500/30 bg-space-850 shadow-inner">
+            <Globe className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+            <span className="text-xs font-mono font-bold text-slate-300 whitespace-nowrap">
+              Enter IP:
+            </span>
+            <input
+              type="text"
+              value={ipInput}
+              onChange={(e) => setIpInput(e.target.value)}
+              onKeyDown={handleIpKeyDown}
+              placeholder={esp32Url ? esp32Url.replace(/^https?:\/\//, '') : '10.168.251.244'}
+              className="bg-space-950/70 border border-white/10 rounded px-2 py-0.5 text-xs font-mono text-cyan-200 placeholder:text-slate-500 w-28 sm:w-36 focus:outline-none focus:border-cyan-400 transition-colors"
+              title={`Current ESP32 target: ${esp32Url || 'http://10.168.251.244'}`}
+            />
+            <button
+              onClick={handleIpSubmit}
+              disabled={ipLoading || !ipInput.trim()}
+              className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-cyan-600 hover:bg-cyan-500 text-white disabled:opacity-40 transition-colors shadow-[0_0_8px_rgba(6,182,212,0.3)]"
+            >
+              {ipLoading ? '...' : 'SET'}
+            </button>
+          </div>
+
+          {/* Start / Stop Recording Button */}
+          <button
+            onClick={onToggleRecording}
+            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border text-xs font-mono font-bold transition-all ${
+              isRecording
+                ? 'border-red-500/50 bg-red-950/40 text-red-300 hover:bg-red-900/50 shadow-[0_0_12px_rgba(239,68,68,0.25)]'
+                : 'border-emerald-500/30 bg-emerald-950/30 text-emerald-300 hover:bg-emerald-900/40 shadow-[0_0_12px_rgba(16,185,129,0.15)]'
+            }`}
+            title={isRecording ? 'Stop recording telemetry to MongoDB' : 'Start recording telemetry to MongoDB'}
+          >
+            {isRecording ? (
+              <>
+                <Square className="w-3 h-3 text-red-400 fill-red-400" />
+                <span>Stop Recording</span>
+                <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
+              </>
+            ) : (
+              <>
+                <Circle className="w-3 h-3 text-emerald-400 fill-emerald-400" />
+                <span>Start Recording</span>
+              </>
+            )}
+          </button>
+
+          {/* Active Session indicator */}
           {activeSession ? (
             <div className="flex items-center space-x-2 px-3 py-1.5 rounded-lg border border-red-500/30 bg-red-950/30 text-red-300 text-xs font-mono">
               <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
