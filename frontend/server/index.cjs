@@ -77,14 +77,18 @@ setInterval(async () => {
   }
 }, POLL_INTERVAL)
 
+const DISCONNECT_GRACE_PERIOD_MS = 10000 // 10 seconds grace period
+
 function handleHardwareFailure() {
   consecutiveFailures++
-  if (consecutiveFailures > 5 && isHardwareReachable) {
+  const timeSinceLastPacket = Date.now() - lastPacketTime
+  if (isHardwareReachable && timeSinceLastPacket >= DISCONNECT_GRACE_PERIOD_MS) {
     isHardwareReachable = false
-    console.log('[Satellite Link] ESP32 connection lost. Finalizing session...')
+    console.log(`[Satellite Link] No packets received for ${Math.round(timeSinceLastPacket / 1000)}s (>= 10s). Marking connection lost...`)
     sessionManager.endSession('aborted')
   }
 }
+
 
 // -------------------------------------------------------------
 // ROUTES
@@ -124,13 +128,17 @@ app.get('/api/live', (req, res) => {
   }
 
   // mode === 'live'
-  if (isHardwareReachable && latestTelemetryCache && latestTelemetryCache._source === 'esp32_hardware') {
+  const timeSinceLastPacket = Date.now() - lastPacketTime
+  const withinGracePeriod = lastPacketTime > 0 && timeSinceLastPacket < DISCONNECT_GRACE_PERIOD_MS
+
+  if ((isHardwareReachable || withinGracePeriod) && latestTelemetryCache && latestTelemetryCache._source === 'esp32_hardware') {
     return res.json({
       ...latestTelemetryCache,
       _meta: {
         mode: 'live',
         isHardwareReachable: true,
         source: 'esp32_hardware',
+        timeSinceLastPacket,
         activeSession: activeSession ? {
           sessionId: activeSession.sessionId,
           startTime: activeSession.startTime,

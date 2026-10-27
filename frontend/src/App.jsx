@@ -30,6 +30,8 @@ export default function App() {
   const [isRecording, setIsRecording] = useState(false)
   const [esp32Url, setEsp32Url] = useState('')
   const prevPacket = useRef(null)
+  const lastPacketReceivedTime = useRef(0)
+  const DISCONNECT_TIMEOUT_MS = 10000 // Only disconnect if no packet for at least 10s
 
   // Fetch status only when telemetry receiving is active
   const fetchStatus = useCallback(() => {
@@ -47,6 +49,22 @@ export default function App() {
       return () => clearInterval(id)
     }
   }, [isReceivingTelemetry, fetchStatus])
+
+  // 10-second inactivity watchdog: only mark disconnected if no packet received for >= 10s
+  useEffect(() => {
+    if (!isReceivingTelemetry) return
+
+    const interval = setInterval(() => {
+      if (lastPacketReceivedTime.current > 0) {
+        const elapsed = Date.now() - lastPacketReceivedTime.current
+        if (elapsed >= DISCONNECT_TIMEOUT_MS) {
+          setConnected(false)
+        }
+      }
+    }, 500)
+
+    return () => clearInterval(interval)
+  }, [isReceivingTelemetry])
 
   // Real-time live polling loop (16 Hz) - ONLY active when manually toggled on
   useEffect(() => {
@@ -74,9 +92,13 @@ export default function App() {
               }
 
               if (json.error === 'esp32_unreachable') {
-                setConnected(false)
+                const elapsed = Date.now() - lastPacketReceivedTime.current
+                if (lastPacketReceivedTime.current === 0 || elapsed >= DISCONNECT_TIMEOUT_MS) {
+                  setConnected(false)
+                }
               } else {
                 setData(json)
+                lastPacketReceivedTime.current = Date.now()
                 setConnected(true)
 
                 // Append to history buffer for graphs
@@ -87,10 +109,20 @@ export default function App() {
               }
             }
           } else {
-            if (active) setConnected(false)
+            if (active) {
+              const elapsed = Date.now() - lastPacketReceivedTime.current
+              if (lastPacketReceivedTime.current === 0 || elapsed >= DISCONNECT_TIMEOUT_MS) {
+                setConnected(false)
+              }
+            }
           }
         } catch {
-          if (active) setConnected(false)
+          if (active) {
+            const elapsed = Date.now() - lastPacketReceivedTime.current
+            if (lastPacketReceivedTime.current === 0 || elapsed >= DISCONNECT_TIMEOUT_MS) {
+              setConnected(false)
+            }
+          }
         }
         await new Promise(r => setTimeout(r, POLL_INTERVAL))
       }
@@ -105,6 +137,7 @@ export default function App() {
     setIsReceivingTelemetry(prev => {
       const next = !prev
       if (!next) {
+        lastPacketReceivedTime.current = 0
         setConnected(false)
       }
       return next
