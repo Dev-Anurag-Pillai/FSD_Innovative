@@ -23,11 +23,20 @@ let latestTelemetryCache = null
 // MongoDB recording state (user-controlled via Start/Stop Recording button)
 let isRecording = false
 
+// Common headers for tunnel/remote ESP32 requests
+const NGROK_HEADERS = {
+  'ngrok-skip-browser-warning': 'true',
+  'User-Agent': 'CanSatGroundStation/2.0',
+  'Accept': 'application/json'
+}
+
 // Connect to MongoDB
 connectDB()
 
 // Background polling loop (16 Hz ~62ms)
 const POLL_INTERVAL = 62
+let isPollingInFlight = false
+
 setInterval(async () => {
   if (mode === 'simulation') {
     const simPacket = simulator.stepSimulator()
@@ -43,12 +52,26 @@ setInterval(async () => {
     return
   }
 
+  // Prevent stacking overlapping network requests over tunnels
+  if (isPollingInFlight) return
+  isPollingInFlight = true
+
   // mode === 'live' -> Strictly query ESP32 API
   try {
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 200)
+    const isRemoteOrTunnel = esp32Url.includes('ngrok') || esp32Url.startsWith('https://') || Boolean(process.env.RENDER)
+    const timeoutMs = isRemoteOrTunnel ? 3500 : 800
 
-    const r = await fetch(`${esp32Url}/api/live`, { signal: controller.signal })
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+
+    const r = await fetch(`${esp32Url}/api/live`, {
+      signal: controller.signal,
+      headers: {
+        'ngrok-skip-browser-warning': 'true',
+        'User-Agent': 'CanSatGroundStation/2.0',
+        'Accept': 'application/json'
+      }
+    })
     clearTimeout(timeoutId)
 
     if (r.ok) {
@@ -74,6 +97,8 @@ setInterval(async () => {
     }
   } catch (err) {
     handleHardwareFailure()
+  } finally {
+    isPollingInFlight = false
   }
 }, POLL_INTERVAL)
 
@@ -174,7 +199,7 @@ app.get('/api/status', async (req, res) => {
 
   if (isHardwareReachable && mode !== 'simulation') {
     try {
-      const r = await fetch(`${esp32Url}/api/status`)
+      const r = await fetch(`${esp32Url}/api/status`, { headers: NGROK_HEADERS })
       const json = await r.json()
       return res.json({
         ...json,
@@ -206,7 +231,7 @@ app.post('/api/calibrate', async (req, res) => {
 
   if (isHardwareReachable && mode !== 'simulation') {
     try {
-      const r = await fetch(`${esp32Url}/api/calibrate`, { method: 'POST' })
+      const r = await fetch(`${esp32Url}/api/calibrate`, { method: 'POST', headers: NGROK_HEADERS })
       responseData = await r.json()
       success = responseData.success || true
     } catch (err) {
