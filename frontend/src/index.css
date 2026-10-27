@@ -16,66 +16,62 @@
 
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  background-color: #06080e;
-  color: #e2e8f0;
+  background-color: #0c0d0f;
+  color: #e4e4e7;
   min-height: 100vh;
   overflow-x: hidden;
   background-image: 
-    radial-gradient(ellipse 80% 50% at 50% -20%, rgba(14, 165, 233, 0.12), transparent),
-    radial-gradient(ellipse 60% 40% at 100% 50%, rgba(139, 92, 246, 0.06), transparent),
-    radial-gradient(ellipse 60% 40% at 0% 80%, rgba(16, 185, 129, 0.05), transparent);
+    radial-gradient(ellipse 80% 50% at 50% -20%, rgba(255, 255, 255, 0.03), transparent),
+    radial-gradient(ellipse 60% 40% at 50% 100%, rgba(255, 255, 255, 0.02), transparent);
 }
 
-/* Custom dark scrollbar */
+/* Custom dark grayscale scrollbar */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
 }
 ::-webkit-scrollbar-track {
-  background: #0a0e17;
+  background: #111215;
 }
 ::-webkit-scrollbar-thumb {
-  background: #1e293b;
-  border-radius: 3px;
+  background: #27272a;
+  border-radius: 2px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #334155;
+  background: #3f3f46;
 }
 
-/* Glassmorphism panel styling */
+/* Grayscale HUD Panel */
 .hud-panel {
-  background: rgba(10, 14, 23, 0.75);
+  background: rgba(18, 19, 22, 0.82);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 4px 20px 0 rgba(0, 0, 0, 0.4);
 }
 
 .hud-panel:hover {
-  border-color: rgba(56, 189, 248, 0.2);
+  border-color: rgba(255, 255, 255, 0.14);
 }
 
-/* Cyber card glow */
-.hud-border-cyan {
-  border-color: rgba(56, 189, 248, 0.3);
+/* Red Metallic Accent (Disconnected State) */
+.metallic-red-accent {
+  border-color: rgba(185, 28, 28, 0.45);
+  box-shadow: 0 0 16px rgba(220, 38, 38, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
-/* Grid lines overlay */
-.tech-grid-bg {
-  background-size: 24px 24px;
-  background-image: 
-    linear-gradient(to right, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+.metallic-red-glow {
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.25);
 }
 
-/* High-tech pulsing animations */
-@keyframes radar-sweep {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
+/* Green Metallic Accent (Connected State) */
+.metallic-green-accent {
+  border-color: rgba(16, 185, 129, 0.45);
+  box-shadow: 0 0 16px rgba(16, 185, 129, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
-.radar-sweep-animation {
-  animation: radar-sweep 4s linear infinite;
+.metallic-green-glow {
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.25);
 }
 
 /* Telemetry number font */

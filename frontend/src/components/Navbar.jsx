@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Radio, Database, HardDrive, Wifi, WifiOff, Clock, ShieldCheck, Flame, RotateCw, Rocket, Circle, Square, Globe } from 'lucide-react'
+import { Radio, Database, HardDrive, Wifi, WifiOff, Globe, Play, Square, Circle } from 'lucide-react'
 
 export default function Navbar({
   connected,
@@ -12,12 +12,11 @@ export default function Navbar({
   isRecording,
   onToggleRecording,
   esp32Url,
-  onChangeIp
+  onChangeIp,
+  isReceivingTelemetry,
+  onToggleTelemetry
 }) {
   const isMongoConnected = meta?.mongoConnected || false
-  const isHardware = meta?.source === 'esp32_hardware'
-  const isSim = meta?.source === 'simulation'
-
   const [ipInput, setIpInput] = useState('')
   const [ipLoading, setIpLoading] = useState(false)
 
@@ -36,43 +35,71 @@ export default function Navbar({
 
   const handleIpKeyDown = (e) => {
     if (e.key === 'Enter') handleIpSubmit()
-    if (e.key === 'Escape') {
-      setIpInput('')
-    }
+    if (e.key === 'Escape') setIpInput('')
   }
 
   return (
-    <header className="border-b border-white/10 bg-space-900/90 backdrop-blur-md sticky top-0 z-40">
-      <div className="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-4">
-        {/* Left: Branding & Mission Info */}
+    <header
+      className={`bg-zinc-950/95 backdrop-blur-md sticky top-0 z-40 transition-colors duration-300 border-b ${
+        connected ? 'border-emerald-900/40 metallic-green-glow' : 'border-red-950/50 metallic-red-glow'
+      }`}
+    >
+      <div className="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+        {/* Left: Branding in clean industrial grayscale */}
         <div className="flex items-center space-x-3">
-          <div className="relative flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500/20 to-blue-600/30 border border-cyan-500/40 text-cyan-400">
-            <Radio className="w-5 h-5 animate-pulse" />
-            <div className="absolute -inset-0.5 rounded-xl bg-cyan-400/20 blur-sm -z-10" />
+          <div
+            className={`flex items-center justify-center w-9 h-9 rounded-lg border transition-all ${
+              connected
+                ? 'border-emerald-700/60 bg-emerald-950/30 text-emerald-400'
+                : 'border-red-900/60 bg-red-950/30 text-red-400'
+            }`}
+          >
+            <Radio className="w-4 h-4" />
           </div>
           <div>
             <div className="flex items-center space-x-2">
-              <span className="font-extrabold text-base tracking-wide bg-gradient-to-r from-cyan-400 via-blue-400 to-purple-400 bg-clip-text text-transparent">
-                CANSAT GROUND CONTROL
+              <span className="font-bold text-sm tracking-widest text-zinc-100 uppercase">
+                CanSat Ground Control
               </span>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full border border-cyan-500/30 bg-cyan-500/10 text-cyan-300 font-semibold uppercase">
-                v2.0 • 16 Hz
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-zinc-700 bg-zinc-800 text-zinc-300 font-semibold">
+                16 Hz
               </span>
             </div>
-            <div className="text-xs text-slate-400 font-mono flex items-center gap-2 mt-0.5">
-              <span>ESP32-S3 TELEMETRY SYSTEM</span>
-              <span className="text-slate-600">•</span>
-              <span className="text-slate-400">ID: SAT-ALPHA-01</span>
+            <div className="text-[11px] text-zinc-400 font-mono mt-0.5">
+              ESP32-S3 Telemetry Station
             </div>
           </div>
         </div>
 
-        {/* Center: IP Input + Recording + Session Info */}
+        {/* Center: Controls (Manual Telemetry Toggle, IP, Recording, Sessions) */}
         <div className="flex items-center gap-2 flex-wrap">
+          {/* MANUAL TELEMETRY RECEIVING TOGGLE BUTTON */}
+          <button
+            onClick={onToggleTelemetry}
+            className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg border text-xs font-mono font-bold transition-all ${
+              isReceivingTelemetry
+                ? 'border-emerald-600/70 bg-emerald-950/40 text-emerald-300 hover:bg-emerald-900/50 shadow-[0_0_12px_rgba(16,185,129,0.25)]'
+                : 'border-red-900/70 bg-red-950/30 text-red-300 hover:bg-red-900/40 shadow-[0_0_12px_rgba(220,38,38,0.2)]'
+            }`}
+            title={isReceivingTelemetry ? 'Stop receiving live telemetry packets' : 'Start receiving live telemetry packets'}
+          >
+            {isReceivingTelemetry ? (
+              <>
+                <Square className="w-3.5 h-3.5 text-emerald-400 fill-emerald-400" />
+                <span>STOP TELEMETRY</span>
+              </>
+            ) : (
+              <>
+                <Play className="w-3.5 h-3.5 text-red-400 fill-red-400" />
+                <span>START TELEMETRY</span>
+              </>
+            )}
+          </button>
+
           {/* Dynamic IP Input */}
-          <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded-lg border border-cyan-500/30 bg-space-850 shadow-inner">
-            <Globe className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-            <span className="text-xs font-mono font-bold text-slate-300 whitespace-nowrap">
+          <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded-lg border border-zinc-800 bg-zinc-900">
+            <Globe className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+            <span className="text-xs font-mono text-zinc-400 whitespace-nowrap">
               Enter IP:
             </span>
             <input
@@ -81,13 +108,13 @@ export default function Navbar({
               onChange={(e) => setIpInput(e.target.value)}
               onKeyDown={handleIpKeyDown}
               placeholder={esp32Url ? esp32Url.replace(/^https?:\/\//, '') : '10.168.251.244'}
-              className="bg-space-950/70 border border-white/10 rounded px-2 py-0.5 text-xs font-mono text-cyan-200 placeholder:text-slate-500 w-28 sm:w-36 focus:outline-none focus:border-cyan-400 transition-colors"
+              className="bg-zinc-950 border border-zinc-800 rounded px-2 py-0.5 text-xs font-mono text-zinc-200 placeholder:text-zinc-600 w-28 sm:w-36 focus:outline-none focus:border-zinc-500"
               title={`Current ESP32 target: ${esp32Url || 'http://10.168.251.244'}`}
             />
             <button
               onClick={handleIpSubmit}
               disabled={ipLoading || !ipInput.trim()}
-              className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-cyan-600 hover:bg-cyan-500 text-white disabled:opacity-40 transition-colors shadow-[0_0_8px_rgba(6,182,212,0.3)]"
+              className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 disabled:opacity-40 transition-colors"
             >
               {ipLoading ? '...' : 'SET'}
             </button>
@@ -96,10 +123,10 @@ export default function Navbar({
           {/* Start / Stop Recording Button */}
           <button
             onClick={onToggleRecording}
-            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border text-xs font-mono font-bold transition-all ${
+            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border text-xs font-mono font-semibold transition-all ${
               isRecording
-                ? 'border-red-500/50 bg-red-950/40 text-red-300 hover:bg-red-900/50 shadow-[0_0_12px_rgba(239,68,68,0.25)]'
-                : 'border-emerald-500/30 bg-emerald-950/30 text-emerald-300 hover:bg-emerald-900/40 shadow-[0_0_12px_rgba(16,185,129,0.15)]'
+                ? 'border-red-700/60 bg-red-950/40 text-red-300 hover:bg-red-900/50'
+                : 'border-zinc-800 bg-zinc-900 text-zinc-300 hover:bg-zinc-800'
             }`}
             title={isRecording ? 'Stop recording telemetry to MongoDB' : 'Start recording telemetry to MongoDB'}
           >
@@ -107,109 +134,78 @@ export default function Navbar({
               <>
                 <Square className="w-3 h-3 text-red-400 fill-red-400" />
                 <span>Stop Recording</span>
-                <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
               </>
             ) : (
               <>
-                <Circle className="w-3 h-3 text-emerald-400 fill-emerald-400" />
+                <Circle className="w-3 h-3 text-zinc-400 fill-zinc-400" />
                 <span>Start Recording</span>
               </>
             )}
           </button>
 
-          {/* Active Session indicator */}
-          {activeSession ? (
-            <div className="flex items-center space-x-2 px-3 py-1.5 rounded-lg border border-red-500/30 bg-red-950/30 text-red-300 text-xs font-mono">
-              <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
-              <span className="font-bold">REC:</span>
-              <span className="text-slate-300 truncate max-w-[160px]" title={activeSession.sessionId}>
-                {activeSession.sessionId}
-              </span>
-              <span className="text-red-400 font-bold ml-1">
-                ({activeSession.packetCount || 0} pkts)
-              </span>
-            </div>
-          ) : (
-            <div className="flex items-center space-x-2 px-3 py-1.5 rounded-lg border border-slate-700 bg-space-850 text-slate-400 text-xs font-mono">
-              <span className="w-2 h-2 rounded-full bg-amber-500" />
-              <span>STANDBY</span>
-            </div>
-          )}
-
-          {/* Session Explorer Button */}
+          {/* Flight Logs Button */}
           <button
             onClick={onOpenSessions}
-            className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border border-cyan-500/30 bg-cyan-950/30 hover:bg-cyan-900/40 text-cyan-300 text-xs font-mono transition-colors"
+            className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-xs font-mono transition-colors"
             title="Browse recorded session files and MongoDB logs"
           >
-            <HardDrive className="w-3.5 h-3.5" />
+            <HardDrive className="w-3.5 h-3.5 text-zinc-400" />
             <span>Flight Logs</span>
           </button>
         </div>
 
-        {/* Right: Telemetry Link & DBMS Health */}
-        <div className="flex items-center space-x-3 text-xs font-mono">
-          {/* Simulate vs Live Toggle Switch */}
-          <div className="flex items-center p-1 rounded-xl border border-white/10 bg-space-850 shadow-inner">
+        {/* Right: Mode & Connection Status Indicators */}
+        <div className="flex items-center space-x-2.5 text-xs font-mono">
+          {/* Live vs Sim Toggle */}
+          <div className="flex items-center rounded-lg border border-zinc-800 bg-zinc-900 p-0.5">
             <button
               onClick={() => onToggleMode('live')}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-mono font-bold transition-all ${
+              className={`px-2.5 py-1 rounded text-[11px] font-bold transition-all ${
                 mode === 'live'
-                  ? 'bg-gradient-to-r from-emerald-500 to-teal-400 text-space-950 shadow-[0_0_12px_rgba(16,185,129,0.35)]'
-                  : 'text-slate-400 hover:text-white hover:bg-white/5'
+                  ? 'bg-zinc-700 text-zinc-100 shadow-sm'
+                  : 'text-zinc-500 hover:text-zinc-300'
               }`}
-              title="Fetch real-time telemetry from ESP32 API"
             >
-              <Radio className={`w-3.5 h-3.5 ${mode === 'live' ? 'animate-pulse' : ''}`} />
-              <span>LIVE</span>
+              LIVE
             </button>
-
             <button
               onClick={() => onToggleMode('simulation')}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-mono font-bold transition-all ${
+              className={`px-2.5 py-1 rounded text-[11px] font-bold transition-all ${
                 mode === 'simulation'
-                  ? 'bg-gradient-to-r from-purple-500 to-indigo-500 text-white shadow-[0_0_12px_rgba(168,85,247,0.35)]'
-                  : 'text-slate-400 hover:text-white hover:bg-white/5'
+                  ? 'bg-zinc-700 text-zinc-100 shadow-sm'
+                  : 'text-zinc-500 hover:text-zinc-300'
               }`}
-              title="Start a realistic flight simulation sequence"
             >
-              <Rocket className={`w-3.5 h-3.5 ${mode === 'simulation' ? 'animate-bounce' : ''}`} />
-              <span>SIMULATE</span>
+              SIMULATE
             </button>
           </div>
 
-          {/* MongoDB Status Chip */}
+          {/* MongoDB Status */}
           <div
-            className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-lg border ${
+            className={`flex items-center space-x-1.5 px-2 py-1 rounded-lg border ${
               isMongoConnected
-                ? 'border-emerald-500/30 bg-emerald-950/20 text-emerald-300'
-                : 'border-amber-500/30 bg-amber-950/20 text-amber-300'
+                ? 'border-emerald-800/50 bg-emerald-950/20 text-emerald-400'
+                : 'border-zinc-800 bg-zinc-900 text-zinc-400'
             }`}
-            title={
-              isMongoConnected
-                ? 'MongoDB connected - telemetry and sessions synchronized'
-                : 'MongoDB offline - local JSON/CSV file logging active, auto-reconnecting...'
-            }
+            title={isMongoConnected ? 'MongoDB connected' : 'MongoDB offline'}
           >
             <Database className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">
-              {isMongoConnected ? 'MongoDB: Online' : 'MongoDB: File Mode'}
+              {isMongoConnected ? 'MongoDB' : 'File Mode'}
             </span>
-            <span className={`w-1.5 h-1.5 rounded-full ${isMongoConnected ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'}`} />
+            <span className={`w-1.5 h-1.5 rounded-full ${isMongoConnected ? 'bg-emerald-400' : 'bg-zinc-500'}`} />
           </div>
 
-          {/* Satellite Radio Link Status */}
+          {/* System Satellite Connection Status with Metallic Red or Green Accent */}
           <div
-            className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-lg border ${
+            className={`flex items-center space-x-1.5 px-3 py-1 rounded-lg border font-bold transition-all ${
               connected
-                ? 'border-emerald-500/40 bg-emerald-950/30 text-emerald-300'
-                : 'border-red-500/40 bg-red-950/30 text-red-300'
+                ? 'border-emerald-700/60 bg-emerald-950/30 text-emerald-400 metallic-green-glow'
+                : 'border-red-900/60 bg-red-950/30 text-red-400 metallic-red-glow'
             }`}
           >
-            {connected ? <Wifi className="w-3.5 h-3.5 text-emerald-400 animate-pulse" /> : <WifiOff className="w-3.5 h-3.5 text-red-400" />}
-            <span className="font-bold">
-              {connected ? (isHardware ? 'LINK LIVE' : 'SIM LINK') : 'LINK DOWN'}
-            </span>
+            {connected ? <Wifi className="w-3.5 h-3.5 text-emerald-400" /> : <WifiOff className="w-3.5 h-3.5 text-red-400" />}
+            <span>{connected ? 'CONNECTED' : 'DISCONNECTED'}</span>
           </div>
         </div>
       </div>

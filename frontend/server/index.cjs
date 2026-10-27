@@ -10,7 +10,7 @@ const app = express()
 app.use(cors())
 app.use(express.json())
 
-const ESP32_DEFAULT_IP = process.env.ESP32_IP || 'http://10.168.251.244'
+const ESP32_DEFAULT_IP = process.env.ESP32_IP || 'http://10.25.68.244'
 let esp32Url = ESP32_DEFAULT_IP
 let mode = 'live' // 'live' or 'simulation'
 

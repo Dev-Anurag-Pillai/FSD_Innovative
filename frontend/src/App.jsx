@@ -10,14 +10,7 @@ import {
   Gauge,
   TrendingUp,
   Battery,
-  ShieldCheck,
-  AlertCircle,
-  Radio,
-  Clock,
-  Compass,
-  CheckCircle2,
-  HardDrive,
-  Rocket
+  Radio
 } from 'lucide-react'
 
 const POLL_INTERVAL = 62 // ~16 Hz
@@ -27,6 +20,7 @@ export default function App() {
   const [data, setData] = useState(null)
   const [status, setStatus] = useState(null)
   const [connected, setConnected] = useState(false)
+  const [isReceivingTelemetry, setIsReceivingTelemetry] = useState(false)
   const [loadingCommand, setLoadingCommand] = useState(false)
   const [commandLogs, setCommandLogs] = useState([])
   const [telemetryHistory, setTelemetryHistory] = useState([])
@@ -37,22 +31,30 @@ export default function App() {
   const [esp32Url, setEsp32Url] = useState('')
   const prevPacket = useRef(null)
 
-  // Fetch status on mount and periodically
+  // Fetch status only when telemetry receiving is active
   const fetchStatus = useCallback(() => {
+    if (!isReceivingTelemetry) return
     fetch('/api/status')
       .then(r => r.json())
       .then(setStatus)
       .catch(() => {})
-  }, [])
+  }, [isReceivingTelemetry])
 
   useEffect(() => {
-    fetchStatus()
-    const id = setInterval(fetchStatus, 3000)
-    return () => clearInterval(id)
-  }, [fetchStatus])
+    if (isReceivingTelemetry) {
+      fetchStatus()
+      const id = setInterval(fetchStatus, 3000)
+      return () => clearInterval(id)
+    }
+  }, [isReceivingTelemetry, fetchStatus])
 
-  // Real-time live polling loop (16 Hz)
+  // Real-time live polling loop (16 Hz) - ONLY active when manually toggled on
   useEffect(() => {
+    if (!isReceivingTelemetry) {
+      setConnected(false)
+      return
+    }
+
     let active = true
 
     async function poll() {
@@ -67,7 +69,6 @@ export default function App() {
               }
               if (json._meta) {
                 setMeta(json._meta)
-                // Sync recording state and ESP32 URL from server
                 if (json._meta.isRecording !== undefined) setIsRecording(json._meta.isRecording)
                 if (json._meta.esp32Url) setEsp32Url(json._meta.esp32Url)
               }
@@ -97,7 +98,18 @@ export default function App() {
 
     poll()
     return () => { active = false }
-  }, [mode])
+  }, [isReceivingTelemetry, mode])
+
+  // Toggle Manual Telemetry Receiving
+  const handleToggleTelemetry = () => {
+    setIsReceivingTelemetry(prev => {
+      const next = !prev
+      if (!next) {
+        setConnected(false)
+      }
+      return next
+    })
+  }
 
   // Action Dispatcher for Command Center
   const handleCommand = async (endpoint, label) => {
@@ -121,7 +133,6 @@ export default function App() {
         }
       ])
 
-      // Re-fetch status if calibrate or launch
       if (endpoint === 'calibrate' || endpoint === 'launch') {
         fetchStatus()
       }
@@ -153,28 +164,15 @@ export default function App() {
       })
       const json = await res.json()
 
-      if (targetMode === 'simulation' || targetMode === 'simulate') {
-        setCommandLogs(prev => [
-          ...prev,
-          {
-            command: 'SIMULATE MODE',
-            time: timeStr,
-            status: 'LAUNCHED',
-            details: json.details || 'Flight simulation started & rocket ascent thrust initiated'
-          }
-        ])
-        setTelemetryHistory([])
-      } else {
-        setCommandLogs(prev => [
-          ...prev,
-          {
-            command: 'LIVE API MODE',
-            time: timeStr,
-            status: 'ACTIVE',
-            details: json.details || 'Streaming live telemetry from ESP32 API'
-          }
-        ])
-      }
+      setCommandLogs(prev => [
+        ...prev,
+        {
+          command: targetMode === 'simulation' ? 'SIMULATION' : 'LIVE LINK',
+          time: timeStr,
+          status: 'ACTIVE',
+          details: json.details || `Switched to ${targetMode}`
+        }
+      ])
 
       fetchStatus()
     } catch (e) {
@@ -216,7 +214,7 @@ export default function App() {
             command: 'SESSION CLOSED',
             time: new Date().toLocaleTimeString(),
             status: 'SUCCESS',
-            details: `Saved ${json.session.packetCount} packets to file`
+            details: `Saved ${json.session.packetCount} packets`
           }
         ])
         fetchStatus()
@@ -289,10 +287,10 @@ export default function App() {
         setCommandLogs(prev => [
           ...prev,
           {
-            command: 'SET ESP32 IP',
+            command: 'SET IP',
             time: timeStr,
             status: 'SUCCESS',
-            details: `Target changed: ${json.previousUrl} → ${json.esp32Url}`
+            details: `Target: ${json.esp32Url}`
           }
         ])
         fetchStatus()
@@ -301,7 +299,7 @@ export default function App() {
       setCommandLogs(prev => [
         ...prev,
         {
-          command: 'SET ESP32 IP',
+          command: 'SET IP',
           time: timeStr,
           status: 'ERROR',
           details: err.message || 'Failed to update IP'
@@ -310,69 +308,54 @@ export default function App() {
     }
   }
 
-  // Pulse animation detection on packet change
-  const packetChanged = data && prevPacket.current !== data.p
   if (data) prevPacket.current = data.p
-
   const activeSession = meta?.activeSession || status?.activeSession
 
-  // Key cards
+  // Grayscale Key Cards with status-based border accents
   const cards = data ? [
     {
       label: 'Packet Number',
       value: data.p,
       unit: '',
-      icon: Layers,
-      color: 'text-cyan-400',
-      borderColor: 'border-cyan-500/30'
+      icon: Layers
     },
     {
       label: 'Altitude',
       value: data.a?.toFixed(2),
       unit: 'm',
-      icon: TrendingUp,
-      color: 'text-cyan-300',
-      borderColor: 'border-cyan-500/30'
+      icon: TrendingUp
     },
     {
       label: 'Vertical Velocity',
       value: data.v?.toFixed(2),
       unit: 'm/s',
-      icon: Activity,
-      color: 'text-amber-400',
-      borderColor: 'border-amber-500/30'
+      icon: Activity
     },
     {
       label: 'Baro Pressure',
       value: data.pr?.toFixed(2),
       unit: 'hPa',
-      icon: Gauge,
-      color: 'text-purple-400',
-      borderColor: 'border-purple-500/30'
+      icon: Gauge
     },
     {
       label: 'Battery Bus',
       value: data.bv?.toFixed(3),
       unit: 'V',
-      icon: Battery,
-      color: 'text-emerald-400',
-      borderColor: 'border-emerald-500/30'
+      icon: Battery
     },
     {
       label: 'Flight State',
-      value: data.state || (connected ? 'ACTIVE' : 'OFFLINE'),
+      value: data.state || (connected ? 'ACTIVE' : 'STANDBY'),
       unit: '',
-      icon: Radio,
-      color: 'text-cyan-400',
-      borderColor: 'border-cyan-500/30'
+      icon: Radio
     }
   ] : []
 
   const orientation = data ? { x: data.x || 0, y: data.y || 0, z: data.z || 0 } : null
 
   return (
-    <div className="min-h-screen bg-space-950 text-slate-100 flex flex-col font-sans selection:bg-cyan-500 selection:text-space-950">
-      {/* Top Mission Navbar */}
+    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans selection:bg-zinc-700 selection:text-white">
+      {/* Top Navigation Bar with Manual Telemetry Toggle & Status Accents */}
       <Navbar
         connected={connected}
         meta={meta}
@@ -385,37 +368,39 @@ export default function App() {
         onToggleRecording={handleToggleRecording}
         esp32Url={esp32Url}
         onChangeIp={handleChangeIp}
+        isReceivingTelemetry={isReceivingTelemetry}
+        onToggleTelemetry={handleToggleTelemetry}
       />
 
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 space-y-6">
-        {/* Sensor Status Bar */}
+      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 space-y-5">
+        {/* Sensor Status Bar in Grayscale */}
         {status && (
-          <div className="hud-panel rounded-xl p-3 border border-white/10 flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
+          <div className="hud-panel rounded-xl p-3 border border-zinc-800 flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
             <div className="flex items-center space-x-2">
-              <span className="text-slate-400 font-semibold uppercase tracking-wider text-[11px]">
+              <span className="text-zinc-400 font-semibold uppercase tracking-wider text-[11px]">
                 Hardware Bus:
               </span>
-              <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded-lg border border-white/5 bg-space-900">
-                <span className={`w-2 h-2 rounded-full ${status.bmp ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]' : 'bg-red-400'}`} />
-                <span className="text-slate-300 font-bold">BMP390</span>
+              <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded-lg border border-zinc-800 bg-zinc-900">
+                <span className={`w-2 h-2 rounded-full ${status.bmp ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-red-700'}`} />
+                <span className="text-zinc-300 font-bold">BMP390</span>
               </div>
-              <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded-lg border border-white/5 bg-space-900">
-                <span className={`w-2 h-2 rounded-full ${status.bno ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]' : 'bg-red-400'}`} />
-                <span className="text-slate-300 font-bold">BNO055</span>
+              <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded-lg border border-zinc-800 bg-zinc-900">
+                <span className={`w-2 h-2 rounded-full ${status.bno ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-red-700'}`} />
+                <span className="text-zinc-300 font-bold">BNO055</span>
               </div>
-              <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded-lg border border-white/5 bg-space-900">
-                <span className={`w-2 h-2 rounded-full ${status.ina ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]' : 'bg-red-400'}`} />
-                <span className="text-slate-300 font-bold">INA219</span>
+              <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded-lg border border-zinc-800 bg-zinc-900">
+                <span className={`w-2 h-2 rounded-full ${status.ina ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-red-700'}`} />
+                <span className="text-zinc-300 font-bold">INA219</span>
               </div>
             </div>
 
-            <div className="flex items-center space-x-3 text-slate-400">
+            <div className="flex items-center space-x-3 text-zinc-400">
               <div>
-                Pressure Baseline: <strong className="text-cyan-300 font-mono">{status.ref?.toFixed(2) || '1013.25'} hPa</strong>
+                Pressure Baseline: <strong className="text-zinc-200 font-mono">{status.ref?.toFixed(2) || '1013.25'} hPa</strong>
               </div>
-              <span className="text-slate-600">•</span>
+              <span className="text-zinc-600">•</span>
               <div>
-                Parachute: <strong className={status.parachuteDeployed ? 'text-emerald-400' : 'text-slate-400'}>
+                Parachute: <strong className={status.parachuteDeployed ? 'text-emerald-400' : 'text-zinc-400'}>
                   {status.parachuteDeployed ? 'DEPLOYED' : 'ARMED'}
                 </strong>
               </div>
@@ -423,50 +408,32 @@ export default function App() {
           </div>
         )}
 
-        {/* Offline Alert when in Live Mode and satellite is disconnected */}
-        {mode === 'live' && !connected && (
-          <div className="p-4 rounded-xl border border-amber-500/30 bg-amber-950/20 text-amber-200 flex flex-wrap items-center justify-between gap-3 text-xs font-mono animate-pulse-fast">
-            <div className="flex items-center space-x-2.5">
-              <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
-              <span>
-                <strong>Live Stream Offline:</strong> Awaiting ESP32 at <code className="text-cyan-300">{esp32Url || 'http://10.168.251.244'}/api/live</code>. Enter your current IP in "Enter IP:" above, or click <strong>SIMULATE</strong>.
-              </span>
-            </div>
-            <button
-              onClick={() => handleToggleMode('simulation')}
-              className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-lg border border-purple-500/40 bg-purple-950/50 hover:bg-purple-900/60 text-purple-200 font-bold transition-all shadow-[0_0_15px_rgba(168,85,247,0.25)]"
-            >
-              <Rocket className="w-3.5 h-3.5 text-purple-400" />
-              <span>Launch Flight Simulation</span>
-            </button>
-          </div>
-        )}
-
-        {/* Primary Telemetry Metric Cards */}
+        {/* Primary Telemetry Metric Cards (Grayscale with subtle metallic accent borders) */}
         {data && (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3.5">
             {cards.map((c) => {
               const Icon = c.icon
-              const isPkt = c.label === 'Packet Number'
               return (
                 <div
                   key={c.label}
-                  className={`hud-panel rounded-xl p-3.5 border transition-all ${c.borderColor} ${
-                    isPkt && packetChanged ? 'scale-[1.02] bg-cyan-950/30' : ''
+                  className={`hud-panel rounded-xl p-3.5 border transition-all ${
+                    connected
+                      ? 'border-emerald-900/40 hover:border-emerald-700/60'
+                      : 'border-red-950/60 hover:border-red-800/40'
                   }`}
                 >
-                  <div className="flex items-center justify-between text-slate-400 mb-1.5">
+                  <div className="flex items-center justify-between text-zinc-400 mb-1.5">
                     <span className="text-[10px] font-mono font-semibold uppercase tracking-wider truncate">
                       {c.label}
                     </span>
-                    <Icon className="w-3.5 h-3.5 shrink-0 opacity-60" />
+                    <Icon className="w-3.5 h-3.5 shrink-0 text-zinc-500" />
                   </div>
                   <div className="flex items-baseline space-x-1">
-                    <span className={`text-xl sm:text-2xl font-bold font-mono tracking-tight ${c.color}`}>
+                    <span className="text-xl sm:text-2xl font-bold font-mono tracking-tight text-zinc-100">
                       {c.value}
                     </span>
                     {c.unit && (
-                      <span className="text-xs text-slate-400 font-mono">{c.unit}</span>
+                      <span className="text-xs text-zinc-400 font-mono">{c.unit}</span>
                     )}
                   </div>
                 </div>
@@ -477,7 +444,6 @@ export default function App() {
 
         {/* Middle Section: Command Center & 3D Attitude Visualizer */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
-          {/* Left Column (Command Center): 7 cols */}
           <div className="lg:col-span-7 flex flex-col">
             <CommandCenter
               onCommand={handleCommand}
@@ -488,36 +454,35 @@ export default function App() {
               activeSession={activeSession}
               mode={mode}
               onToggleMode={handleToggleMode}
+              connected={connected}
             />
           </div>
 
-          {/* Right Column (3D CanSat Visualizer): 5 cols */}
           <div className="lg:col-span-5 flex flex-col">
-            <CanSatViewer orientation={orientation} />
+            <CanSatViewer orientation={orientation} connected={connected} />
           </div>
         </div>
 
-        {/* Lower Section: Telemetry Graphs for ALL Values */}
+        {/* Lower Section: Telemetry Graphs in Minimal Grayscale */}
         <div className="pt-2">
           <TelemetryGraphs
             telemetryHistory={telemetryHistory}
             currentData={data || {}}
+            connected={connected}
           />
         </div>
       </main>
 
-      {/* Footer */}
-      <footer className="mt-auto border-t border-white/5 bg-space-950 py-4 px-6 text-center text-xs text-slate-500 font-mono">
+      {/* Footer in Clean Grayscale */}
+      <footer className="mt-auto border-t border-zinc-900 bg-zinc-950 py-3 px-6 text-center text-xs text-zinc-500 font-mono">
         <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2">
           <div>
-            CanSat Ground Station • MongoDB Session DBMS • React + Tailwind CSS + Node.js
+            CanSat Ground Station • MongoDB Session DBMS • React + Node.js
           </div>
           <div className="flex items-center gap-3">
             <span>Sample Rate: 16 Hz</span>
             <span>•</span>
-            <span>Port: 3001</span>
-            <span>•</span>
-            <span className="text-cyan-400">All Systems Nominal</span>
+            <span>{isReceivingTelemetry ? 'Telemetry Stream: Active' : 'Telemetry Stream: Standby'}</span>
           </div>
         </div>
       </footer>
